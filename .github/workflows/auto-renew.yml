@@ -5,16 +5,26 @@ on:
     - cron: "0 17 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: dnshe-auto-renew-main
+  cancel-in-progress: false
+
 jobs:
   renew:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       DNSHE_ACCOUNTS_JSON: ${{ secrets.DNSHE_ACCOUNTS_JSON }}
+      DNSHE_MASK_SENSITIVE_LOGS: "true"
       LOG_LEVEL: INFO
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,3 +36,55 @@ jobs:
 
       - name: Run auto renew
         run: python renewer.py --mode once
+
+      - name: Update run.time
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          NOW_UTC="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          NOW_UTC_MINUS_8="$(TZ=Etc/GMT+8 date '+%Y-%m-%d %H:%M:%S UTC-8')"
+          {
+            echo "last_run_utc=${NOW_UTC}"
+            echo "last_run_utc_minus_8=${NOW_UTC_MINUS_8}"
+          } > run.time
+
+      - name: Commit run.time
+        if: always() && github.ref == 'refs/heads/main'
+        env:
+          RUN_TIME_COMMIT_MESSAGE: "chore(ci): update run.time [skip ci]"
+          BOT_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "${BOT_EMAIL}"
+
+          if git diff --quiet -- run.time; then
+            echo "run.time unchanged, skip commit"
+            exit 0
+          fi
+
+          LAST_SUBJECT="$(git log -1 --pretty=%s)"
+          LAST_AUTHOR_EMAIL="$(git log -1 --pretty=%ae)"
+          LAST_FILES="$(git show --name-only --pretty='' HEAD | sed '/^$/d')"
+
+          SHOULD_SQUASH="false"
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1 \
+            && [ "${LAST_SUBJECT}" = "${RUN_TIME_COMMIT_MESSAGE}" ] \
+            && [ "${LAST_AUTHOR_EMAIL}" = "${BOT_EMAIL}" ] \
+            && [ "${LAST_FILES}" = "run.time" ]; then
+            SHOULD_SQUASH="true"
+          fi
+
+          if [ "${SHOULD_SQUASH}" = "true" ]; then
+            echo "squashing consecutive run.time bot commit"
+            git reset --soft HEAD~1
+            git add run.time
+            git commit -m "${RUN_TIME_COMMIT_MESSAGE}"
+            git push --force-with-lease origin HEAD:main
+            exit 0
+          fi
+
+          git add run.time
+          git commit -m "${RUN_TIME_COMMIT_MESSAGE}"
+          git push origin HEAD:main
