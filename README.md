@@ -1,16 +1,16 @@
 # DNSHE Auto Renew (Multi-Account)
 
-每天按 UTC-8 的 09:00 检查 DNSHE 账户下子域名是否进入可续期窗口，满足条件后自动调用续期接口。
+每天按 UTC+8 的 09:00 检查 DNSHE 账户下子域名是否进入可续期窗口，满足条件后自动调用续期接口。
 
 ## Features
 
 - Multi-account processing
-- Daily schedule support with fixed timezone offset (UTC-8)
+- Daily schedule support with fixed timezone offset (UTC+8)
 - Pagination for subdomain list
 - Renew requests are sent only when a domain is inside the free renewal window
 - Strict status filtering with allowlist (default `active` only)
 - Sensitive account/subdomain identifiers are masked in GitHub Actions logs
-- GitHub Actions schedule (`17:00 UTC` = `09:00 UTC-8`)
+- GitHub Actions schedule (`01:00 UTC` = `09:00 UTC+8`)
 - After each workflow run, `run.time` is updated on `main`
 
 ## Requirements
@@ -27,10 +27,10 @@
 python renewer.py --mode once
 ```
 
-3. Run daemon scheduler mode (daily 09:00 at UTC-8):
+3. Run daemon scheduler mode (daily 09:00 at UTC+8):
 
 ```bash
-python renewer.py --mode daemon --run-time 09:00 --tz-offset -8
+python renewer.py --mode daemon --run-time 09:00 --tz-offset 8
 ```
 
 4. Dry run:

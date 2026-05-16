@@ -701,8 +701,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tz-offset",
         type=int,
-        default=env_int("DNSHE_TZ_OFFSET", -8),
-        help="Target timezone offset hours, UTC-8 means -8",
+        default=env_int("DNSHE_TZ_OFFSET", 8),
+        help="Target timezone offset hours, UTC+8 means 8",
     )
     parser.add_argument(
         "--dry-run",

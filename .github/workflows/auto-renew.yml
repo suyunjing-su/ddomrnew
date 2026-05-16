@@ -2,7 +2,7 @@ name: dnshe-auto-renew
 
 on:
   schedule:
-    - cron: "0 17 * * *"
+    - cron: "0 1 * * *"
   workflow_dispatch:
 
 permissions:
@@ -42,10 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           NOW_UTC="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          NOW_UTC_MINUS_8="$(TZ=Etc/GMT+8 date '+%Y-%m-%d %H:%M:%S UTC-8')"
+          NOW_UTC_PLUS_8="$(TZ=Etc/GMT-8 date '+%Y-%m-%d %H:%M:%S UTC+8')"
           {
             echo "last_run_utc=${NOW_UTC}"
-            echo "last_run_utc_minus_8=${NOW_UTC_MINUS_8}"
+            echo "last_run_utc_plus_8=${NOW_UTC_PLUS_8}"
           } > run.time
 
       - name: Commit run.time
