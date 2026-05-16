@@ -252,9 +252,10 @@ def to_domain_log_name(
 ) -> str:
     if not mask_sensitive_logs:
         return domain_name
-    if subdomain_id is not None:
-        return f"domain-{subdomain_id}"
-    return to_log_token("domain", domain_name)
+    raw = domain_name
+    if raw == "unknown-domain" and subdomain_id is not None:
+        raw = f"id-{subdomain_id}"
+    return to_log_token("domain", raw)
 
 
 def normalize_statuses(value: Any, fallback: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -418,13 +419,16 @@ def process_account(
                 allowed_statuses=settings.allowed_statuses,
                 attempt_when_unknown=settings.attempt_when_unknown,
             )
+            domain_ref = domain_log_name
+            if not settings.mask_sensitive_logs:
+                domain_ref = f"{domain_log_name} (id={subdomain_id})"
+
             if not should_renew:
                 stats["not_due"] += 1
                 logging.info(
-                    "[%s] skip %s (id=%s, reason=%s)",
+                    "[%s] skip %s (reason=%s)",
                     account_log_name,
-                    domain_log_name,
-                    subdomain_id,
+                    domain_ref,
                     reason,
                 )
                 continue
@@ -432,10 +436,9 @@ def process_account(
             stats["renew_candidates"] += 1
             if dry_run:
                 logging.info(
-                    "[%s] dry-run renew candidate %s (id=%s, reason=%s)",
+                    "[%s] dry-run renew candidate %s (reason=%s)",
                     account_log_name,
-                    domain_log_name,
-                    subdomain_id,
+                    domain_ref,
                     reason,
                 )
                 continue
@@ -444,10 +447,9 @@ def process_account(
                 renew_data = client.renew_subdomain(subdomain_id)
                 stats["renewed"] += 1
                 logging.info(
-                    "[%s] renewed %s (id=%s, new_expires_at=%s, charged_amount=%s)",
+                    "[%s] renewed %s (new_expires_at=%s, charged_amount=%s)",
                     account_log_name,
-                    domain_log_name,
-                    subdomain_id,
+                    domain_ref,
                     renew_data.get("new_expires_at"),
                     renew_data.get("charged_amount"),
                 )
@@ -455,21 +457,20 @@ def process_account(
                 if err.code == "renewal_not_yet_available":
                     stats["not_yet_available"] += 1
                     logging.info(
-                        "[%s] not yet renewable %s (id=%s)",
+                        "[%s] not yet renewable %s",
                         account_log_name,
-                        domain_log_name,
-                        subdomain_id,
+                        domain_ref,
                     )
                 else:
                     stats["failed"] += 1
                     if settings.mask_sensitive_logs:
                         error_line = (
-                            f"renew failed for {domain_log_name} (id={subdomain_id}, "
+                            f"renew failed for {domain_ref} ("
                             f"code={err.code}, status={err.status_code})"
                         )
                     else:
                         error_line = (
-                            f"renew failed for {domain_log_name} (id={subdomain_id}, "
+                            f"renew failed for {domain_ref} ("
                             f"code={err.code}, message={err})"
                         )
                     stats["errors"].append(error_line)
