@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ class RuntimeSettings:
     renewal_threshold_days: int = 7
     attempt_when_unknown: bool = False
     allowed_statuses: Tuple[str, ...] = ("active",)
+    mask_sensitive_logs: bool = False
     per_page: int = 200
     request_interval_seconds: float = 0.2
     max_retries: int = 2
@@ -56,6 +58,7 @@ class DnsheClient:
     def __init__(self, account: AccountConfig, settings: RuntimeSettings) -> None:
         self.account = account
         self.settings = settings
+        self.account_log_name = to_account_log_name(account.name, settings.mask_sensitive_logs)
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -99,25 +102,29 @@ class DnsheClient:
                 wait_seconds = self.settings.retry_backoff_seconds * (attempt + 1)
                 logging.warning(
                     "[%s] request failed, retrying in %.1fs: %s",
-                    self.account.name,
+                    self.account_log_name,
                     wait_seconds,
                     last_error,
                 )
                 time.sleep(wait_seconds)
 
-        raise RuntimeError(f"[{self.account.name}] request failed: {last_error}")
+        raise RuntimeError(f"[{self.account_log_name}] request failed: {last_error}")
 
     def _parse_response(self, response: requests.Response) -> Dict[str, Any]:
         try:
             data = response.json()
         except ValueError as err:
+            if self.settings.mask_sensitive_logs:
+                raise ValueError(
+                    f"[{self.account_log_name}] invalid JSON response"
+                ) from err
             text_sample = response.text[:200]
             raise ValueError(
-                f"[{self.account.name}] invalid JSON response: {text_sample}"
+                f"[{self.account_log_name}] invalid JSON response: {text_sample}"
             ) from err
 
         if not isinstance(data, dict):
-            raise ValueError(f"[{self.account.name}] unexpected response payload")
+            raise ValueError(f"[{self.account_log_name}] unexpected response payload")
 
         if not response.ok or data.get("success") is False:
             error_code = str(data.get("error_code") or f"http_{response.status_code}")
@@ -142,7 +149,7 @@ class DnsheClient:
             )
             records = data.get("subdomains", [])
             if not isinstance(records, list):
-                raise ValueError(f"[{self.account.name}] subdomains should be a list")
+                raise ValueError(f"[{self.account_log_name}] subdomains should be a list")
 
             for record in records:
                 if isinstance(record, dict):
@@ -224,6 +231,30 @@ def get_domain_name(subdomain: Dict[str, Any]) -> str:
     if left:
         return left
     return "unknown-domain"
+
+
+def to_log_token(prefix: str, raw: str) -> str:
+    text = str(raw).strip() or "unknown"
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}-{digest}"
+
+
+def to_account_log_name(account_name: str, mask_sensitive_logs: bool) -> str:
+    if not mask_sensitive_logs:
+        return account_name
+    return to_log_token("acct", account_name)
+
+
+def to_domain_log_name(
+    domain_name: str,
+    subdomain_id: Optional[int],
+    mask_sensitive_logs: bool,
+) -> str:
+    if not mask_sensitive_logs:
+        return domain_name
+    if subdomain_id is not None:
+        return f"domain-{subdomain_id}"
+    return to_log_token("domain", domain_name)
 
 
 def normalize_statuses(value: Any, fallback: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -345,8 +376,9 @@ def process_account(
     settings: RuntimeSettings,
     dry_run: bool,
 ) -> Dict[str, Any]:
+    account_log_name = to_account_log_name(account.name, settings.mask_sensitive_logs)
     stats: Dict[str, Any] = {
-        "account": account.name,
+        "account": account_log_name,
         "domains_total": 0,
         "renew_candidates": 0,
         "renewed": 0,
@@ -357,7 +389,7 @@ def process_account(
     }
 
     if not account.enabled:
-        logging.info("[%s] skipped, account disabled", account.name)
+        logging.info("[%s] skipped, account disabled", account_log_name)
         return stats
 
     client = DnsheClient(account, settings)
@@ -368,10 +400,15 @@ def process_account(
             stats["domains_total"] += 1
             subdomain_id = to_int(subdomain.get("id"))
             domain_name = get_domain_name(subdomain)
+            domain_log_name = to_domain_log_name(
+                domain_name,
+                subdomain_id,
+                settings.mask_sensitive_logs,
+            )
 
             if subdomain_id is None:
                 stats["failed"] += 1
-                stats["errors"].append(f"missing id for {domain_name}")
+                stats["errors"].append(f"missing id for {domain_log_name}")
                 continue
 
             should_renew, reason = should_attempt_renew(
@@ -385,8 +422,8 @@ def process_account(
                 stats["not_due"] += 1
                 logging.info(
                     "[%s] skip %s (id=%s, reason=%s)",
-                    account.name,
-                    domain_name,
+                    account_log_name,
+                    domain_log_name,
                     subdomain_id,
                     reason,
                 )
@@ -396,8 +433,8 @@ def process_account(
             if dry_run:
                 logging.info(
                     "[%s] dry-run renew candidate %s (id=%s, reason=%s)",
-                    account.name,
-                    domain_name,
+                    account_log_name,
+                    domain_log_name,
                     subdomain_id,
                     reason,
                 )
@@ -408,8 +445,8 @@ def process_account(
                 stats["renewed"] += 1
                 logging.info(
                     "[%s] renewed %s (id=%s, new_expires_at=%s, charged_amount=%s)",
-                    account.name,
-                    domain_name,
+                    account_log_name,
+                    domain_log_name,
                     subdomain_id,
                     renew_data.get("new_expires_at"),
                     renew_data.get("charged_amount"),
@@ -419,25 +456,31 @@ def process_account(
                     stats["not_yet_available"] += 1
                     logging.info(
                         "[%s] not yet renewable %s (id=%s)",
-                        account.name,
-                        domain_name,
+                        account_log_name,
+                        domain_log_name,
                         subdomain_id,
                     )
                 else:
                     stats["failed"] += 1
-                    error_line = (
-                        f"renew failed for {domain_name} (id={subdomain_id}, "
-                        f"code={err.code}, message={err})"
-                    )
+                    if settings.mask_sensitive_logs:
+                        error_line = (
+                            f"renew failed for {domain_log_name} (id={subdomain_id}, "
+                            f"code={err.code}, status={err.status_code})"
+                        )
+                    else:
+                        error_line = (
+                            f"renew failed for {domain_log_name} (id={subdomain_id}, "
+                            f"code={err.code}, message={err})"
+                        )
                     stats["errors"].append(error_line)
-                    logging.error("[%s] %s", account.name, error_line)
+                    logging.error("[%s] %s", account_log_name, error_line)
 
             if settings.request_interval_seconds > 0:
                 time.sleep(settings.request_interval_seconds)
     except Exception as err:  # noqa: BLE001
         stats["failed"] += 1
         stats["errors"].append(f"account processing failed: {err}")
-        logging.exception("[%s] account processing failed", account.name)
+        logging.exception("[%s] account processing failed", account_log_name)
 
     return stats
 
@@ -520,6 +563,7 @@ def load_settings(config_path: str) -> RuntimeSettings:
         accounts.append(account)
 
     defaults = RuntimeSettings(accounts=accounts)
+    default_mask_sensitive_logs = is_truthy(os.getenv("GITHUB_ACTIONS", ""))
     allowed_statuses = normalize_statuses(
         raw.get("allowed_statuses"),
         defaults.allowed_statuses,
@@ -543,6 +587,10 @@ def load_settings(config_path: str) -> RuntimeSettings:
             is_truthy(raw.get("attempt_when_unknown", defaults.attempt_when_unknown)),
         ),
         allowed_statuses=allowed_statuses,
+        mask_sensitive_logs=env_bool(
+            "DNSHE_MASK_SENSITIVE_LOGS",
+            is_truthy(raw.get("mask_sensitive_logs", default_mask_sensitive_logs)),
+        ),
         per_page=env_int("DNSHE_PER_PAGE", to_int(raw.get("per_page")) or defaults.per_page),
         request_interval_seconds=env_float(
             "DNSHE_REQUEST_INTERVAL_SECONDS",
