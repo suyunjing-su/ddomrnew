@@ -1,0 +1,24 @@
+{
+  "accounts": [
+    {
+      "name": "main-account",
+      "api_key": "cfsd_xxxxxxxxxx",
+      "api_secret": "yyyyyyyyyyyy",
+      "enabled": true,
+      "timeout_seconds": 20
+    },
+    {
+      "name": "backup-account",
+      "api_key": "cfsd_zzzzzzzzzz",
+      "api_secret": "aaaaaaaaaaaa",
+      "enabled": true,
+      "timeout_seconds": 20
+    }
+  ],
+  "renewal_threshold_days": 7,
+  "attempt_when_unknown": true,
+  "per_page": 200,
+  "request_interval_seconds": 0.2,
+  "max_retries": 2,
+  "retry_backoff_seconds": 1.0
+}
