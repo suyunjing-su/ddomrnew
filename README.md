@@ -93,6 +93,7 @@ Workflow behavior:
 - Workflow sets `DNSHE_MASK_SENSITIVE_LOGS=true`, so CI logs do not print account names, subdomain names, or domain IDs; subdomains use per-run random aliases (not deterministic hash values).
 - Local run keeps readable logs by default (unless you set `DNSHE_MASK_SENSITIVE_LOGS=true`).
 - Workflow writes latest run timestamp into `run.time`.
+- Workflow deletes old run records and keeps only the latest 3 records for this workflow.
 - If the previous `main` commit is also the bot's `run.time` update commit, workflow squashes it into one commit and force-pushes with lease.
 - Normal code commits are never rewritten by this logic.
 
