@@ -90,7 +90,7 @@ Tune optional settings in the same JSON payload (top-level fields), or extend wo
 
 Workflow behavior:
 
-- Workflow sets `DNSHE_MASK_SENSITIVE_LOGS=true`, so CI logs do not print account names or subdomain names.
+- Workflow sets `DNSHE_MASK_SENSITIVE_LOGS=true`, so CI logs do not print account names, subdomain names, or domain IDs.
 - Local run keeps readable logs by default (unless you set `DNSHE_MASK_SENSITIVE_LOGS=true`).
 - Workflow writes latest run timestamp into `run.time`.
 - If the previous `main` commit is also the bot's `run.time` update commit, workflow squashes it into one commit and force-pushes with lease.
