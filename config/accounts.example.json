@@ -16,7 +16,8 @@
     }
   ],
   "renewal_threshold_days": 7,
-  "attempt_when_unknown": true,
+  "attempt_when_unknown": false,
+  "allowed_statuses": ["active"],
   "per_page": 200,
   "request_interval_seconds": 0.2,
   "max_retries": 2,
