@@ -44,7 +44,8 @@ class AccountConfig:
 class RuntimeSettings:
     accounts: List[AccountConfig]
     renewal_threshold_days: int = 7
-    attempt_when_unknown: bool = True
+    attempt_when_unknown: bool = False
+    allowed_statuses: Tuple[str, ...] = ("active",)
     per_page: int = 200
     request_interval_seconds: float = 0.2
     max_retries: int = 2
@@ -225,36 +226,118 @@ def get_domain_name(subdomain: Dict[str, Any]) -> str:
     return "unknown-domain"
 
 
+def normalize_statuses(value: Any, fallback: Tuple[str, ...]) -> Tuple[str, ...]:
+    if value is None:
+        return fallback
+
+    items: List[str] = []
+    if isinstance(value, str):
+        text = value.replace(";", ",").replace("\n", ",")
+        items = [segment.strip().lower() for segment in text.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            text = str(item).strip().lower()
+            if text:
+                items.append(text)
+    else:
+        text = str(value).strip().lower()
+        if text:
+            items = [text]
+
+    if not items:
+        return fallback
+
+    # Keep order while removing duplicates.
+    return tuple(dict.fromkeys(items))
+
+
+def is_in_free_renew_window(
+    subdomain: Dict[str, Any],
+    now_utc: datetime,
+    threshold_days: int,
+    attempt_when_unknown: bool,
+) -> Tuple[bool, str]:
+    for key in (
+        "in_free_renew_window",
+        "free_renew_available",
+        "free_renewable",
+        "can_free_renew",
+        "can_renew_now",
+        "renewal_available",
+        "is_renewable",
+    ):
+        if key in subdomain:
+            value = subdomain.get(key)
+            if value is None:
+                continue
+            flag = is_truthy(value)
+            return flag, f"{key}={str(flag).lower()}"
+
+    for key in (
+        "free_renew_start_at",
+        "free_renewal_start_at",
+        "renewal_available_at",
+        "renew_available_at",
+    ):
+        value = parse_api_datetime(subdomain.get(key))
+        if value is None:
+            continue
+        if now_utc >= value:
+            return True, f"{key}=reached"
+        return False, f"{key}=pending"
+
+    remaining_days = None
+    remaining_days_key = ""
+    for key in (
+        "free_renew_remaining_days",
+        "renewal_remaining_days",
+        "remaining_days",
+        "days_remaining",
+        "remaining",
+        "days_left",
+    ):
+        value = to_int(subdomain.get(key))
+        if value is not None:
+            remaining_days = value
+            remaining_days_key = key
+            break
+
+    if remaining_days is not None:
+        return remaining_days <= threshold_days, f"{remaining_days_key}={remaining_days}"
+
+    expires_at = parse_api_datetime(subdomain.get("expires_at"))
+    if expires_at is not None:
+        seconds_left = (expires_at - now_utc).total_seconds()
+        days_left = int(seconds_left // 86400)
+        in_window = 0 <= seconds_left <= threshold_days * 86400
+        return in_window, f"days_left={days_left}"
+
+    return attempt_when_unknown, "missing_free_window_fields"
+
+
 def should_attempt_renew(
     subdomain: Dict[str, Any],
     now_utc: datetime,
     threshold_days: int,
+    allowed_statuses: Tuple[str, ...],
     attempt_when_unknown: bool,
 ) -> Tuple[bool, str]:
     if is_truthy(subdomain.get("never_expires")):
         return False, "never_expires"
 
     status = str(subdomain.get("status") or "").strip().lower()
-    if status in {"deleted", "terminated", "cancelled"}:
+    if not status:
+        return False, "status=unknown"
+
+    if status not in allowed_statuses:
         return False, f"status={status}"
 
-    remaining_days = None
-    for key in ("remaining_days", "days_remaining", "remaining", "days_left"):
-        value = to_int(subdomain.get(key))
-        if value is not None:
-            remaining_days = value
-            break
-
-    if remaining_days is not None:
-        return remaining_days <= threshold_days, f"remaining_days={remaining_days}"
-
-    expires_at = parse_api_datetime(subdomain.get("expires_at"))
-    if expires_at is not None:
-        seconds_left = (expires_at - now_utc).total_seconds()
-        days_left = int(seconds_left // 86400)
-        return seconds_left <= threshold_days * 86400, f"days_left={days_left}"
-
-    return attempt_when_unknown, "missing_expiry_fields"
+    return is_in_free_renew_window(
+        subdomain=subdomain,
+        now_utc=now_utc,
+        threshold_days=threshold_days,
+        attempt_when_unknown=attempt_when_unknown,
+    )
 
 
 def process_account(
@@ -295,6 +378,7 @@ def process_account(
                 subdomain=subdomain,
                 now_utc=now_utc,
                 threshold_days=settings.renewal_threshold_days,
+                allowed_statuses=settings.allowed_statuses,
                 attempt_when_unknown=settings.attempt_when_unknown,
             )
             if not should_renew:
@@ -379,14 +463,20 @@ def env_bool(name: str, fallback: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return fallback
-    return is_truthy(raw)
+    text = raw.strip()
+    if not text:
+        return fallback
+    return is_truthy(text)
 
 
 def env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
     if raw is None:
         return fallback
-    value = to_int(raw)
+    text = raw.strip()
+    if not text:
+        return fallback
+    value = to_int(text)
     if value is None:
         raise ValueError(f"invalid integer env {name}")
     return value
@@ -396,7 +486,10 @@ def env_float(name: str, fallback: float) -> float:
     raw = os.getenv(name)
     if raw is None:
         return fallback
-    return float(raw)
+    text = raw.strip()
+    if not text:
+        return fallback
+    return float(text)
 
 
 def load_settings(config_path: str) -> RuntimeSettings:
@@ -427,17 +520,29 @@ def load_settings(config_path: str) -> RuntimeSettings:
         accounts.append(account)
 
     defaults = RuntimeSettings(accounts=accounts)
+    allowed_statuses = normalize_statuses(
+        raw.get("allowed_statuses"),
+        defaults.allowed_statuses,
+    )
+    allowed_statuses = normalize_statuses(
+        os.getenv("DNSHE_ALLOWED_STATUSES"),
+        allowed_statuses,
+    )
+    renewal_threshold_days = env_int(
+        "DNSHE_RENEW_THRESHOLD_DAYS",
+        to_int(raw.get("renewal_threshold_days")) or defaults.renewal_threshold_days,
+    )
+    if renewal_threshold_days < 0:
+        renewal_threshold_days = 0
 
     return RuntimeSettings(
         accounts=accounts,
-        renewal_threshold_days=env_int(
-            "DNSHE_RENEW_THRESHOLD_DAYS",
-            to_int(raw.get("renewal_threshold_days")) or defaults.renewal_threshold_days,
-        ),
+        renewal_threshold_days=renewal_threshold_days,
         attempt_when_unknown=env_bool(
             "DNSHE_ATTEMPT_WHEN_UNKNOWN",
             is_truthy(raw.get("attempt_when_unknown", defaults.attempt_when_unknown)),
         ),
+        allowed_statuses=allowed_statuses,
         per_page=env_int("DNSHE_PER_PAGE", to_int(raw.get("per_page")) or defaults.per_page),
         request_interval_seconds=env_float(
             "DNSHE_REQUEST_INTERVAL_SECONDS",
