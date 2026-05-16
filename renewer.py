@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import sys
 import time
 from dataclasses import dataclass
@@ -249,13 +250,24 @@ def to_domain_log_name(
     domain_name: str,
     subdomain_id: Optional[int],
     mask_sensitive_logs: bool,
+    alias_map: Dict[str, str],
 ) -> str:
     if not mask_sensitive_logs:
         return domain_name
-    raw = domain_name
-    if raw == "unknown-domain" and subdomain_id is not None:
-        raw = f"id-{subdomain_id}"
-    return to_log_token("domain", raw)
+
+    alias_key = domain_name
+    if subdomain_id is not None:
+        alias_key = f"id:{subdomain_id}"
+
+    existing = alias_map.get(alias_key)
+    if existing:
+        return existing
+
+    while True:
+        alias = f"domain-{secrets.token_hex(5)}"
+        if alias not in alias_map.values():
+            alias_map[alias_key] = alias
+            return alias
 
 
 def normalize_statuses(value: Any, fallback: Tuple[str, ...]) -> Tuple[str, ...]:
@@ -395,6 +407,7 @@ def process_account(
 
     client = DnsheClient(account, settings)
     now_utc = datetime.now(UTC)
+    domain_alias_map: Dict[str, str] = {}
 
     try:
         for subdomain in client.iter_subdomains(settings.per_page):
@@ -405,6 +418,7 @@ def process_account(
                 domain_name,
                 subdomain_id,
                 settings.mask_sensitive_logs,
+                domain_alias_map,
             )
 
             if subdomain_id is None:
