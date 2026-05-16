@@ -79,19 +79,11 @@ Account fields:
 
 Workflow file: `.github/workflows/auto-renew.yml`
 
-Set repository secrets/variables:
+Set repository secret:
 
 - Secret: `DNSHE_ACCOUNTS_JSON` (required, multi-account JSON)
-- Variables (optional):
-  - `DNSHE_RENEW_THRESHOLD_DAYS`
-  - `DNSHE_ATTEMPT_WHEN_UNKNOWN`
-  - `DNSHE_ALLOWED_STATUSES`
-  - `DNSHE_PER_PAGE`
-  - `DNSHE_REQUEST_INTERVAL_SECONDS`
-  - `DNSHE_MAX_RETRIES`
-  - `DNSHE_RETRY_BACKOFF_SECONDS`
 
-If optional variables are not set, workflow uses script defaults.
+Tune optional settings in the same JSON payload (top-level fields), or extend workflow env mapping if you prefer GitHub repository variables.
 
 Example secret payload:
 
