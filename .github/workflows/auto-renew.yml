@@ -1,0 +1,34 @@
+name: dnshe-auto-renew
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DNSHE_ACCOUNTS_JSON: ${{ secrets.DNSHE_ACCOUNTS_JSON }}
+      DNSHE_RENEW_THRESHOLD_DAYS: ${{ vars.DNSHE_RENEW_THRESHOLD_DAYS }}
+      DNSHE_ATTEMPT_WHEN_UNKNOWN: ${{ vars.DNSHE_ATTEMPT_WHEN_UNKNOWN }}
+      DNSHE_PER_PAGE: ${{ vars.DNSHE_PER_PAGE }}
+      DNSHE_REQUEST_INTERVAL_SECONDS: ${{ vars.DNSHE_REQUEST_INTERVAL_SECONDS }}
+      DNSHE_MAX_RETRIES: ${{ vars.DNSHE_MAX_RETRIES }}
+      DNSHE_RETRY_BACKOFF_SECONDS: ${{ vars.DNSHE_RETRY_BACKOFF_SECONDS }}
+      LOG_LEVEL: INFO
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run auto renew
+        run: python renewer.py --mode once
