@@ -18,6 +18,7 @@
   "renewal_threshold_days": 7,
   "attempt_when_unknown": false,
   "allowed_statuses": ["active"],
+  "mask_sensitive_logs": false,
   "per_page": 200,
   "request_interval_seconds": 0.2,
   "max_retries": 2,

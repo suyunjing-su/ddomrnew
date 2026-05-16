@@ -9,7 +9,9 @@
 - Pagination for subdomain list
 - Renew requests are sent only when a domain is inside the free renewal window
 - Strict status filtering with allowlist (default `active` only)
+- Sensitive account/subdomain identifiers are masked in GitHub Actions logs
 - GitHub Actions schedule (`17:00 UTC` = `09:00 UTC-8`)
+- After each workflow run, `run.time` is updated on `main`
 
 ## Requirements
 
@@ -70,6 +72,7 @@ Account fields:
 - `DNSHE_REQUEST_INTERVAL_SECONDS`
 - `DNSHE_MAX_RETRIES`
 - `DNSHE_RETRY_BACKOFF_SECONDS`
+- `DNSHE_MASK_SENSITIVE_LOGS`
 - `DNSHE_MODE`
 - `DNSHE_RUN_TIME`
 - `DNSHE_TZ_OFFSET`
@@ -84,6 +87,14 @@ Set repository secret:
 - Secret: `DNSHE_ACCOUNTS_JSON` (required, multi-account JSON)
 
 Tune optional settings in the same JSON payload (top-level fields), or extend workflow env mapping if you prefer GitHub repository variables.
+
+Workflow behavior:
+
+- Workflow sets `DNSHE_MASK_SENSITIVE_LOGS=true`, so CI logs do not print account names or subdomain names.
+- Local run keeps readable logs by default (unless you set `DNSHE_MASK_SENSITIVE_LOGS=true`).
+- Workflow writes latest run timestamp into `run.time`.
+- If the previous `main` commit is also the bot's `run.time` update commit, workflow squashes it into one commit and force-pushes with lease.
+- Normal code commits are never rewritten by this logic.
 
 Example secret payload:
 
@@ -103,6 +114,7 @@ Example secret payload:
   ],
   "renewal_threshold_days": 7,
   "attempt_when_unknown": false,
-  "allowed_statuses": ["active"]
+  "allowed_statuses": ["active"],
+  "mask_sensitive_logs": false
 }
 ```
